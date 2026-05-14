@@ -94,9 +94,18 @@ done
 printf 'upstream active_app {\n    server %s:8000;\n}\n' "$NEW" \
     > nginx/conf.d/active_upstream.conf
 
-docker compose exec nginx nginx -s reload
+# Start nginx if it isn't running yet (first deploy or after a full stack restart).
+# If it is already running, reload it to pick up the new upstream without
+# dropping in-flight connections.
+NGINX_STATUS=$(docker inspect --format '{{.State.Status}}' "$(docker compose ps -q nginx 2>/dev/null)" 2>/dev/null || echo "absent")
 
-echo ">>> nginx reloaded — traffic now flowing to $NEW"
+if [ "$NGINX_STATUS" = "running" ]; then
+    docker compose exec nginx nginx -s reload
+    echo ">>> nginx reloaded — traffic now flowing to $NEW"
+else
+    APP_IMAGE="$IMAGE" docker compose up -d --no-deps nginx
+    echo ">>> nginx started — traffic now flowing to $NEW"
+fi
 
 # ============================================================================
 # Gracefully stop the old slot
