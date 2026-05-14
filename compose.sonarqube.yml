@@ -1,0 +1,64 @@
+# SonarQube stack for local development and analysis.
+#
+# Start:  docker compose -f compose.sonarqube.yml up -d
+# Stop:   docker compose -f compose.sonarqube.yml down
+#
+# First-run setup (after the UI shows "UP"):
+#   1. Open http://localhost:9000 — default credentials: admin / admin
+#   2. Change the admin password when prompted.
+#   3. Create a new project → get a project token.
+#   4. Add SONAR_TOKEN and SONAR_HOST_URL to your GitHub repo secrets/variables.
+#
+# The self-hosted GitHub Actions runner reaches SonarQube at http://localhost:9000
+# because it runs on the same machine as this stack.
+
+services:
+  sonarqube:
+    image: sonarqube:community
+    depends_on:
+      sonarqube-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonarqube-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    # SonarQube requires vm.max_map_count >= 524288 on the host.
+    # Run: sudo sysctl -w vm.max_map_count=524288
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -sf http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"'"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  sonarqube-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  postgres_data:

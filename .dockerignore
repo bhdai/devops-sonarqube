@@ -1,0 +1,49 @@
+# Python bytecode and caches
+__pycache__/
+*.py[oc]
+*.pyo
+
+# Virtual environment — recreated from scratch inside each Docker stage.
+.venv/
+
+# uv lock artifacts that are not needed in image build context
+# (uv.lock and pyproject.toml ARE needed; only the cache is excluded)
+.uv-cache/
+
+# Test + coverage artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local development files
+.env
+*.env
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# CI runner workspace files
+tmp/
+
+# Git directory
+.git/
+
+# Documentation and project scaffolding not needed in image
+README.md
+AGENTS.md
+example.txt
+_develop/
+.agents/
+
+# Nginx config (mounted as a volume at runtime, not baked into the image)
+nginx/
+
+# Compose files
+compose*.yml
+
+# sonar properties not needed inside the application image
+sonar-project.properties

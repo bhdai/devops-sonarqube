@@ -1,0 +1,177 @@
+# CI/CD Pipeline
+#
+# Stages:  lint → test → build (parallel with sonarqube-scan) → deploy
+#
+# Runner split:
+#   lint / test / build  — ubuntu-latest (GitHub-hosted, fast, ephemeral)
+#   sonarqube-scan       — self-hosted   (needs localhost:9000 SonarQube)
+#   deploy               — self-hosted   (needs local Docker Compose stack)
+#
+# Required GitHub repo secrets:
+#   SONAR_TOKEN      — generated in SonarQube UI → My Account → Security
+#
+# Required GitHub repo variables:
+#   SONAR_HOST_URL   — e.g. http://localhost:9000 (accessible from runner)
+#
+# GITHUB_TOKEN is provided automatically; used for ghcr.io push/pull.
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # ============================================================================
+  # lint — static analysis with ruff (fast, GitHub-hosted)
+  # ============================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        run: uv sync --locked --dev
+
+      - name: Run ruff
+        run: uv run ruff check .
+
+  # ============================================================================
+  # test — pytest with coverage; uploads coverage.xml for the scan job
+  # ============================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        run: uv sync --locked --dev
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov --cov-report=xml
+
+      # coverage.xml is passed to the sonarqube-scan job via artifact so
+      # both jobs can run on different runners without sharing a filesystem.
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 1
+
+  # ============================================================================
+  # build — multi-stage Docker build, push to ghcr.io
+  # Runs in parallel with sonarqube-scan (both need test to pass first).
+  # ============================================================================
+  build:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Target the production stage only; development and builder stages are
+      # intermediate and are not pushed to the registry.
+      - name: Build and push production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+
+  # ============================================================================
+  # sonarqube-scan — static analysis + quality gate enforcement
+  #
+  # Runs on the self-hosted runner so it can reach the local SonarQube instance
+  # at http://localhost:9000 without an ngrok tunnel.
+  #
+  # fetch-depth: 0 is required by SonarQube to compute accurate blame
+  # information for new-code detection.
+  # ============================================================================
+  sonarqube-scan:
+    name: SonarQube Scan
+    runs-on: self-hosted
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Download coverage.xml produced by the test job so SonarQube can
+      # report coverage alongside code-quality issues.
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      # Poll the SonarQube API until the background CE task completes, then
+      # read the quality gate status. Fails the job (and blocks deploy) if the
+      # gate returns ERROR.
+      - name: Check SonarQube quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+  # ============================================================================
+  # deploy — Blue-Green slot swap via Docker Compose + nginx reload
+  #
+  # Only runs on push to main (not on PRs) AND only after BOTH build and
+  # sonarqube-scan have succeeded. If the quality gate fails, this job is
+  # skipped entirely — the previous deployment stays active.
+  # ============================================================================
+  deploy:
+    name: Deploy (Blue-Green)
+    runs-on: self-hosted
+    needs: [build, sonarqube-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The deploy script calls `docker compose pull` which needs registry auth.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Blue-Green deploy
+        run: bash scripts/deploy.sh "ghcr.io/${{ github.repository }}:${{ github.sha }}"

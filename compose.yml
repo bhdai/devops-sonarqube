@@ -1,0 +1,73 @@
+# Application stack: Blue-Green deployment with nginx.
+#
+# Usage:
+#   docker compose up -d                 # initial start (blue active)
+#   APP_IMAGE=<new-image> ./scripts/deploy.sh <new-image>   # rolling update
+#
+# APP_IMAGE is set by the deploy script when promoting a new build.
+# Both slots share the same image at rest; only one is receiving nginx traffic.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Blue slot — receives traffic when active_upstream.conf points to app-blue.
+  # ---------------------------------------------------------------------------
+  app-blue:
+    image: ${APP_IMAGE:-devops-sonarqube:latest}
+    restart: unless-stopped
+    networks:
+      - app-net
+    healthcheck:
+      # Use Python's stdlib so no extra packages are needed in the production
+      # image. The deploy script checks this status before cutting over nginx.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Green slot — receives traffic after a successful blue→green promotion.
+  # ---------------------------------------------------------------------------
+  app-green:
+    image: ${APP_IMAGE:-devops-sonarqube:latest}
+    restart: unless-stopped
+    networks:
+      - app-net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # nginx — the single public entry point.
+  # Proxies to whichever slot is declared in conf.d/active_upstream.conf.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      # Main config defines the server block; upstream is in a separate include
+      # so the deploy script can swap it with a single file write + reload.
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      app-blue:
+        condition: service_healthy
+    networks:
+      - app-net
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge

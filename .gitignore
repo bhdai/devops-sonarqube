@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test and coverage artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment files
+.env
+*.env
+
+# Editor / OS noise
+.DS_Store
+.idea/
+*.swp
+
+# Intermediate build artefacts (project-local, per AGENTS.md)
+tmp/
+
+# nginx runtime state — active slot is tracked in memory, not in git.
+# The committed active_upstream.conf sets the initial default (app-blue).
+# After each deploy the file is rewritten on disk but not committed.
+# Uncomment the line below if you want to stop tracking the file:
+# nginx/conf.d/active_upstream.conf
+
