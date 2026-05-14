@@ -62,7 +62,10 @@ def test_create_item():
 
 
 def test_create_multiple_items_have_unique_ids():
-    ids = [client.post("/items", json={"name": f"item-{i}"}).json()["id"] for i in range(3)]
+    ids = [
+        client.post("/items", json={"name": f"item-{i}"}).json()["id"]
+        for i in range(3)
+    ]
     assert len(set(ids)) == 3
 
 
