@@ -24,6 +24,14 @@ htmlcov/
 .idea/
 *.swp
 
+# GitHub Actions self-hosted runner (install outside the project instead: ~/actions-runner/)
+actions-runner/
+_diag/
+_work/
+.runner
+.credentials
+.credentials_rsaparams
+
 # Intermediate build artefacts (project-local, per AGENTS.md)
 tmp/
 
